@@ -550,7 +550,7 @@ def plot_visibility(
     # Color bar 
     cbar = plt.colorbar(target_alt_plot, pad=0.01, label="Target altitude (deg)") 
     cbar.ax.set_ylim(target_min_alt, 90) 
-    cbar.ax.axhline(np.nanmax(target_alt), color="limegreen", ls="dashed") # Show where max altitude is on color bar 
+    cbar.ax.axhline(np.nanmax(Z), color="limegreen", ls="dashed") # Show where max altitude is on color bar 
 
     # Create "fake"/unplotted objects to display in the legend 
     legend_elements = [
