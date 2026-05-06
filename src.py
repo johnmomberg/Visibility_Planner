@@ -564,6 +564,8 @@ def plot_visibility(
     ]
     ax.legend(handles=legend_elements, loc='upper right')
 
+    return fig 
+
 
 
 
