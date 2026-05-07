@@ -19,7 +19,7 @@ To use the tool in your browser, click here to load the Marimo notebook: https:/
 
 This plot shows the visibility window for a target as seen from Winer Observatory in Arizona. The highlighted regions indicate when the target is both above the horizon and the sky is dark.
 
-![Winer Visibility](Example_Plots/Winer_Altair)
+![Winer Visibility](Example_Plots/Winer_Altair.png)
 
 ---
 
