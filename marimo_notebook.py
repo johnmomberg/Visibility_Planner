@@ -4,28 +4,43 @@ __generated_with = "0.13.15"
 app = marimo.App(width="medium")
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _():
     import marimo as mo 
     import src 
+    import matplotlib.pyplot as plt 
 
-    return mo, src
+    # Use light mode for plot 
+    # (Dark mode actually looks good too so comment this out if you want to use dark mode) 
+    plt.style.use("default")
+
+    return mo, plt, src
 
 
 @app.cell(hide_code=True)
 def _(mo):
     # Choose observer location 
 
-    observatory_name_input = mo.ui.text(label="Enter observatory name")
-    lat_input = mo.ui.number(label="Latitude (degrees)")
-    lon_input = mo.ui.number(label="Longitude (degrees)")
+    observatory_name_input = mo.ui.text(label="Enter observatory name:")
+    lat_input = mo.ui.number(label="Latitude (degrees):")
+    lon_input = mo.ui.number(label="Longitude (degrees):")
+
+    observatory_presets_radio = mo.ui.radio(
+        options={
+            "Winer, AZ (32° N, 111° W)": {"observatory_name": "Winer"},
+            "Iowa City, IA (42° N, 92° W)": {"lat_long_tuple": (41.66, -91.53)}, 
+            "Edmonton, Canada (54° N, 114° W)": {"lat_long_tuple": (53.5, -113.5)}, 
+            "Northernmost point in North America (71° N, 157° W)": {"lat_long_tuple": (71.3, -156.8)}, 
+        }
+    )
 
     get_observer_button = mo.ui.run_button(label="Submit (set observer location)") 
 
     observer_tabs = mo.ui.tabs({
-        "Observatory Name": observatory_name_input,
+        "Observatory Name": 
+            mo.md(f"""{observatory_name_input} Ex: Winer"""),
         "Latitude / Longitude": mo.vstack([lat_input, lon_input]),
-        "Choose Preset": mo.md("Preset selection coming soon..."),
+        "Choose from presets": observatory_presets_radio,
     })
 
     mo.hstack([observer_tabs, get_observer_button])
@@ -35,29 +50,41 @@ def _(mo):
         lat_input,
         lon_input,
         observatory_name_input,
+        observatory_presets_radio,
         observer_tabs,
     )
 
 
-@app.cell
+@app.cell(hide_code=True)
 def _(mo):
     # Choose target 
 
-    target_name_input = mo.ui.text(label="Enter target name")
+    target_name_input = mo.ui.text(label="Enter target name:")
     ra_input = mo.ui.text(label="RA:")
     dec_input = mo.ui.text(label="Dec:")
+
+    target_presets_radio = mo.ui.radio(
+        options={
+            "Polaris (circumpolar from Winer)": {"target_name": "Polaris"},
+            "Epsilon Ursae Minoris (nearly circumpolar from Winer)": {"target_name": "Epsilon Ursae Minoris"}, 
+            "Fomalhaut (barely visible from Winer)": {"target_name": "Fomalhaut"}, 
+            "Altair (summer target)": {"target_name": "Altair"}, 
+            "Betelgeuse (winter target)": {"target_name": "Betelgeuse"}
+        }
+    )
 
     get_target_button = mo.ui.run_button(label="Submit (set target)")
 
     target_tabs = mo.ui.tabs({
-        "Target Name": target_name_input,
+        "Target Name": 
+            mo.md(f"""{target_name_input} Ex: Altair"""),
         "RA / Dec": 
             mo.md(f"""
                 {ra_input} Ex: 17 50 47.4
-            
+
                 {dec_input} Ex: +08 52 06.1 
                 """), 
-        "Choose Preset": mo.md("Preset selection coming soon..."),
+        "Choose from presets": target_presets_radio,
     })
 
     mo.hstack([target_tabs, get_target_button])
@@ -66,6 +93,7 @@ def _(mo):
         get_target_button,
         ra_input,
         target_name_input,
+        target_presets_radio,
         target_tabs,
     )
 
@@ -77,6 +105,7 @@ def _(
     lon_input,
     mo,
     observatory_name_input,
+    observatory_presets_radio,
     observer_tabs,
     src,
 ):
@@ -87,6 +116,8 @@ def _(
         Observer = src.get_observer(observatory_name=observatory_name_input.value)
     elif observer_tabs.value == "Latitude / Longitude":
         Observer = src.get_observer(lat_long_tuple=(lat_input.value, lon_input.value))
+    elif observer_tabs.value == "Choose from presets": 
+        Observer = src.get_observer(**observatory_presets_radio.value) 
 
     Observer 
 
@@ -101,6 +132,7 @@ def _(
     ra_input,
     src,
     target_name_input,
+    target_presets_radio,
     target_tabs,
 ):
     # Wait until you click the Submit button to recalculate the target  
@@ -110,6 +142,8 @@ def _(
         Target = src.get_target(target_name=target_name_input.value)
     elif target_tabs.value == "RA / Dec":
         Target = src.get_target(target_radec_str=ra_input.value + " " + dec_input.value)
+    elif target_tabs.value == "Choose from presets": 
+        Target = src.get_target(**target_presets_radio.value) 
 
     Target 
     return (Target,)
