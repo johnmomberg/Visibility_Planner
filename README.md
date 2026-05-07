@@ -19,7 +19,7 @@ To use the tool in your browser, click here to load the Marimo notebook: https:/
 
 This plot shows the visibility window for a target as seen from Winer Observatory in Arizona. The highlighted regions indicate when the target is both above the horizon and the sky is dark.
 
-![Winer Visibility](Example_Plots/Winer_ZetaTau.png)
+![Winer Visibility](Example_Plots/Winer_Altair)
 
 ---
 
@@ -27,7 +27,7 @@ This plot shows the visibility window for a target as seen from Winer Observator
 
 Here we select a different target. Because it has a different right ascension and declination, its visibility shifts to different times of the year compared to the first example.
 
-![Different Target](Example_Plots/Winer_Vega.png)
+![Different Target](Example_Plots/Winer_Betelgeuse.png)
 
 ---
 
@@ -39,7 +39,7 @@ In this example, we return to the original target but change the observing locat
 * The target is **visible for a shorter duration**
 * **Nighttime is shorter in the summer**, since this location is farther from the equator
 
-![Different Location](Example_Plots/IowaCity_ZetaTau.png)
+![Different Location](Example_Plots/55degN_Altair.png)
 
 ---
 
