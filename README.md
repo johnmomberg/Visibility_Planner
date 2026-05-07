@@ -7,7 +7,9 @@
 * the target is **above a minimum altitude**, and
 * it is **nighttime**
 
-This makes it easy to quickly identify optimal observing windows throughout the year.
+This makes it easy to quickly identify optimal observing windows throughout the year. 
+
+To use the tool in your browser, click here: https://marimo.app/github.com/johnmomberg/Visibility_Planner/blob/main/marimo_notebook.py 
 
 ---
 
