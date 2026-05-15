@@ -1,4 +1,8 @@
 import numpy as np 
+import datetime as dt 
+import pandas as pd 
+from tqdm import tqdm 
+from dataclasses import dataclass 
 
 import matplotlib.pyplot as plt 
 import matplotlib.dates as mdates
@@ -7,22 +11,13 @@ import matplotlib.colors as mcolors
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch 
 
-import datetime as dt 
-import pandas as pd 
-from tqdm import tqdm 
-
 import astropy 
 import astropy.units as u 
-
+import astroquery.simbad
+import astroquery.jplhorizons
 import astroplan 
 import pytz 
 import timezonefinder as tzf 
-from astroquery.simbad import Simbad
-
-
-
-
-
 
 
 
@@ -99,222 +94,312 @@ def get_observer(observatory_name=None, lat_long_tuple=None):
 
 
 
+@dataclass 
+class Target: 
+    ra: np.array 
+    dec: np.array 
+    times: np.array 
+    name: str = "" 
+    coord_str: str = "RA/dec unavailable" 
 
 
 
 
 
-# Create a Target (either by name, such as "Vega" or "Zeta Tau", or by ra/dec position) 
-def get_target(target_name=None, target_radec_str=None): 
-
+def get_target(target_name=None, target_radec_str=None):
     """
-    Create a SkyCoord target from either a name or RA/Dec string.
+    Resolve a target's RA/dec coordinates for use in visibility calculations.
+
+    Accepts either a target name (looked up automatically) or a direct RA/dec
+    string. If a name is provided, Simbad is tried first (for fixed targets like
+    stars and galaxies), falling back to JPL Horizons for solar system bodies.
+    In both cases, returns a daily RA/dec array spanning 2 years from 2025-12-31.
 
     Parameters
     ----------
     target_name : str, optional
-        Name of the object (e.g., "Vega", "Zeta Tau") 
-        Uses SIMBAD to look up coordinates 
-
-    target_radec_str : str, optional 
-        RA/Dec in HMS/DMS format:
-        "HH MM SS.ss ±DD MM SS.ss"
-
-    Returns
-    -------
-    astropy.coordinates.SkyCoord
-        Target coordinates 
-
-    Examples
-    --------
-    >>> get_target(target_name="Vega")
-    >>> get_target(target_radec_str="18 36 56.34 +38 47 01.28")
-    """
-
-    if (target_name is None and target_radec_str is None) or (target_name is not None and target_radec_str is not None): 
-        raise ValueError("Must provide either 'target_name' or 'target_radec_str' (but not both)")
-
-    # Look up Ra/dec of target by name using Simbad 
-    if target_name is not None: 
-        result = Simbad.query_object(target_name)
-        
-        if result is None:
-            raise ValueError(f"Object '{target_name}' not found in SIMBAD")
-    
-        ra_str = result['ra'][0]   
-        dec_str = result['dec'][0] 
-        coord = astropy.coordinates.SkyCoord(ra_str, dec_str, unit=(u.deg, u.deg))
-        target_radec_str = coord.to_string('hmsdms', sep=' ')
-
-    Target = astropy.coordinates.SkyCoord(
-        target_radec_str,
-        unit=(u.hourangle, u.deg)
-    )
-
-    # Include target name in Target object (i.e., "Vega" or "Zeta Tau")
-    Target.name = target_name 
-
-    # Include target ra/dec string for the plot title 
-    target_coord_str = Target.to_string('hmsdms', precision=1) 
-    target_coord_str = target_coord_str.replace("h", ":")
-    target_coord_str = target_coord_str.replace("m", ":", 1)
-    target_coord_str = target_coord_str.replace("s", "", 1)
-    target_coord_str = target_coord_str.replace("d", "°")
-    target_coord_str = target_coord_str.replace("m", "\'")
-    target_coord_str = target_coord_str.replace("s", "\"")
-    Target.coord_str = target_coord_str
-
-    return Target 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# Calculate altitude of the Sun and the Target for a range of times 
-def calc_visibility(Observer, Target, num_yrs: int = 2, spacing_minutes=10): 
-    """
-    Compute Sun and target altitudes over a time grid for visibility analysis.
-
-    This function generates a regularly sampled time grid spanning one or more years,
-    and computes the altitude of both the Sun and a target at each time. The results
-    are suitable for visualization (e.g., heatmaps of observability, twilight regions).
-
-    Parameters
-    ----------
-    Observer : astroplan.Observer
-        Observer object defining the location and timezone. 
-        Typically created with `get_observer()`. 
-        
-    Target : astropy.coordinates.SkyCoord
-        Target coordinates. Typically created with `get_target()`.
-
-    num_yrs : int, optional
-        Number of years to compute starting from Dec 31, 2025 (default = 2).
-        - 1 → one-year span
-        - 2 → two-year span (useful to avoid edge effects across Dec-Jan boundary) 
-
-    spacing_minutes : int, optional
-        Time resolution of the grid in minutes (default = 10).
-        Smaller values give higher precision but increase computation time. 
+        Name of the target, e.g. "Vega", "M31", "Ceres", or a JPL Horizons
+        numeric ID such as 599 for Jupiter. Mutually exclusive with
+        target_radec_str.
+    target_radec_str : str, optional
+        RA/dec string in the format "HH MM SS +DD MM SS", e.g.
+        "05 34 32.0 +22 00 52". Mutually exclusive with target_name.
 
     Returns
     -------
-    dates : pandas.DatetimeIndex
-        Array of dates (one per day, anchored at local noon).
-    times : array-like of datetime
-        Time axis for one day (local time), used as the vertical axis in plots.
-    target_alt : 2D numpy.ndarray
-        Target altitude in degrees, shape (time, date).
-    sun_alt : 2D numpy.ndarray
-        Sun altitude in degrees, shape (time, date). 
-        This allows you to calculate the visibility without caring about the night/day cutoff 
-        Later, you can mask 'target_alt' based on sun_alt being above any threshold you like 
-        (0 degrees for civil twilight, -18 degrees to require full night, or any value in between, such as -14.548)
+    Target
+        A Target object with the following attributes:
+            - ra : np.ndarray of RA values in degrees, one per day
+            - dec : np.ndarray of Dec values in degrees, one per day
+            - times : pd.DatetimeIndex of UTC timestamps, one per day
+            - name : str, target name (if provided)
+            - coord_str : str, formatted RA/dec string for plot titles
+              (only set for fixed targets; moving targets change position
+              over time so no single coordinate string is meaningful)
 
-    sun_alt : 2D numpy.ndarray
-        Sun altitude in degrees, shape (time, date).
-
-        This is precomputed so that visibility constraints can be applied
-        flexibly at the plotting or analysis stage, rather than being fixed
-        during calculation.
-
-        The sun altitude array can be used to define arbitrary observing
-        conditions after the fact, for example:
-
-        - sun_alt < 0°   → only requires it to be past sunset 
-        - sun_alt < -6°  → stricter condition: civil twilight is not allowed (nautical, astronomical, full night allowed)
-        - sun_alt < -12° → only astronomical twilight and full night allowed 
-        - sun_alt < -18° → only full night allowed 
-        - sun_alt < 14.348234° → you can set the cutoff to be anything you want 
-
-        This design allows you to compute the visibility once and reuse it for different observing criteria 
-
-    Notes
-    -----
-    - The time grid is constructed from local noon to noon (not midnight), which
-      aligns better with astronomical observing nights.
-    - Using two years helps prevent features from being split across year boundaries,
-      similar to plotting multiple periods in a phase-folded light curve.
+    Raises
+    ------
+    ValueError
+        If both or neither of target_name and target_radec_str are provided.
+        If target_name is ambiguous in JPL Horizons (e.g. "Jupiter" instead
+        of the numeric ID 599).
+        If the target cannot be resolved in either Simbad or JPL Horizons.
 
     Examples
     --------
-    >>> obs = get_observer(observatory_name="Winer")
     >>> target = get_target(target_name="Vega")
-    >>> dates, times, target_alt, sun_alt = calc_visibility(obs, target)
-
-    >>> # Higher resolution (slower)
-    >>> calc_visibility(obs, target, spacing_minutes=5)
-
-    >>> # One-year view
-    >>> calc_visibility(obs, target, num_yrs=1)
+    >>> target = get_target(target_name=599)          # Jupiter by JPL ID
+    >>> target = get_target(target_name="Ceres")      # falls back to Horizons
+    >>> target = get_target(target_radec_str="05 34 32.0 +22 00 52")
     """
 
-    print("Calculating visibility...") 
-    print(f"Target: {Target.name} ({Target.coord_str})")
-    print(f"Observer: {Observer.name} ({Observer.coord_str})") 
-    print(f"Number of years: {num_yrs}") 
-    print(f"Minutes between each data point (resolution): {spacing_minutes}")
-
-    # Dates: Every day from December 31st until num_yrs (1 or 2) years ahead 
-    dates = pd.date_range(
+    # Helper func: format a coord nicely for plot title 
+    def format_coord(ra, dec): 
+        coord = astropy.coordinates.SkyCoord(ra=ra, dec=dec, unit="deg") 
+        coord_str = coord.to_string('hmsdms', precision=1) 
+        coord_str = coord_str.replace("h", ":")
+        coord_str = coord_str.replace("m", ":", 1)
+        coord_str = coord_str.replace("s", "", 1)
+        coord_str = coord_str.replace("d", "°")
+        coord_str = coord_str.replace("m", "\'")
+        coord_str = coord_str.replace("s", "\"")
+        return coord_str 
+    
+    # Calculate ra/dec of target once per day from December 31st until num_yrs (1 or 2) years ahead 
+    num_yrs = 2 
+    radec_times = pd.date_range(
         start='2025-12-31 12:00:00',
         end=f'{2025+num_yrs}-12-31 12:00:00',
         freq='1D', # 3D = Calculate visibility every 3rd day, 10D = every 10th day, etc 
-        tz=str(Observer.timezone)
+        tz="UTC", 
     )
-
-    # Samples: how many points per day to calculate the alitudes 
-    samples_per_day = int(24 * 60 / spacing_minutes)  
-
-    # Time relative to noon each day (0 → 24h) (1d continuous array)
-    offsets = astropy.time.TimeDelta(np.linspace(0, 24*3600, samples_per_day), format='sec') 
-
-    # Create 2d grid by folding the 1d continuous array so that each column corresponds to one day 
-    date_astroplan = astropy.time.Time(dates.tz_convert('UTC').to_pydatetime())
-    time_grid = date_astroplan[:, None] + offsets[None, :]
-    times_flat = time_grid.flatten()
-
-    # Y axis variable on plots 
-    time_grid_dt = time_grid.to_datetime() 
-    times = time_grid_dt[0]
-
-    # Build AltAz frame (used by both Target and Sun calculation)
-    altaz_frame = astropy.coordinates.AltAz(obstime=times_flat, location=Observer.location)
-
-    # Calculate target altitudes 
-    print("Calculating target altitudes...")
-    target_alt = Target.transform_to(altaz_frame).alt.to_value()
-    target_alt = target_alt.reshape(time_grid.shape) # Fold 1d array back into the 2d array 
-    target_alt = target_alt.T
-
-    # Calculate sun altitudes 
-    print("Calculating Sun altitudes...")
-    sun_alt = astropy.coordinates.get_sun(times_flat).transform_to(altaz_frame).alt.to_value()
-    sun_alt = sun_alt.reshape(time_grid.shape) # Fold 1d array back into the 2d array 
-    sun_alt = sun_alt.T # Transpose to make sure it treats X as dates and Y as times 
-    print("Done. \n")
-
-    return (
-        dates,          # 1d array of dates (x axis)
-        times,          # 1d array of times (y axis)
-        target_alt,     # 2d array of target altitude at every date and time 
-        sun_alt         # 2d array of Sun altitude at every date and time 
-    ) 
+    
+    # Validate inputs
+    if (target_name is None) == (target_radec_str is None):
+        raise ValueError("Must provide either 'target_name' or 'target_radec_str' (but not both)")
 
 
 
+    # RA/dec provided directly - always fixed
+    if target_radec_str is not None:
+        coord = astropy.coordinates.SkyCoord(target_radec_str, unit=(u.hourangle, u.deg))
+        print(f"Used target_radec_str = {target_radec_str} to generate target coordinates")
+
+        # Create array of repeated values so that it matches the moving output 
+        ra_arr = np.full(len(radec_times), coord.ra.deg)
+        dec_arr = np.full(len(radec_times), coord.dec.deg) 
+
+        # Return Target object with formatted coord string but no name 
+        target_coord_str = format_coord(ra_arr[0], dec_arr[0])
+        return Target(ra=ra_arr, dec=dec_arr, times=radec_times, coord_str=target_coord_str)
 
 
+
+    # Target name provided - try Simbad first, then Horizons
+    if target_name is not None:
+
+        # --- Try Simbad (fixed stars, galaxies, etc.) ---
+        try:
+            print(f"Looking up '{target_name}' in Simbad...")
+            result = astroquery.simbad.Simbad.query_object(target_name)
+            if result is None:
+                raise ValueError("Simbad returned no results")
+            ra = float(result["ra"][0])
+            dec = float(result["dec"][0])
+
+            # Create array of repeated values so that it matches the moving output 
+            ra_arr = np.full(len(radec_times), ra) 
+            dec_arr = np.full(len(radec_times), dec)
+
+            print(f"Retrieved '{target_name}' from Simbad") 
+            
+            # Return Target object with name and formatted coord str 
+            target_coord_str = format_coord(ra_arr[0], dec_arr[0])
+            return Target(ra=ra_arr, dec=dec_arr, times=radec_times, coord_str=target_coord_str, name=target_name)
+
+
+
+        except Exception as e:
+            print(f"Simbad lookup failed ({e}), trying JPL Horizons...")
+
+        # --- Try Horizons (solar system bodies) ---
+        try:
+            jds = astropy.time.Time(radec_times).jd.tolist()
+            ra, dec = [], []
+            batch_size = 50 
+            for i in range(0, len(jds), batch_size):
+                batch = jds[i:i + batch_size]
+                eph = astroquery.jplhorizons.Horizons(id=target_name, epochs=batch).ephemerides()
+                ra.extend(eph["RA"])
+                dec.extend(eph["DEC"])
+            print(f"Retrieved '{target_name}' from JPL Horizons") 
+            ra_arr = np.array(ra) 
+            dec_arr = np.array(dec) 
+
+            # Return Target object with name but no formatted coord str (because it moves) 
+            return Target(ra=ra_arr, dec=dec_arr, times=radec_times, name=target_name)
+
+
+
+        except Exception as e:
+            # Catch the ambiguous name error specifically and give a helpful message
+            if "Ambiguous" in str(e):
+                raise ValueError(
+                    f"Ambiguous target name '{target_name}' in JPL Horizons. "
+                    f"Try using a numeric ID instead (e.g. 599 for Jupiter, 499 for Mars). "
+                    f"Full error: {e}"
+                ) from None
+            raise ValueError(f"Could not resolve '{target_name}' in Simbad or JPL Horizons: {e}") from None
+
+
+
+
+
+
+
+
+
+
+def calc_visibility(observer, target):
+    """
+    Calculate the altitude of a target and the Sun over time for a given observer.
+
+    Interpolates the target's RA/dec from a daily grid onto a finer 10-minute
+    grid, then computes altitude in a single vectorized operation. Works for
+    both fixed targets (where RA/dec is constant) and moving solar system bodies
+    (where RA/dec varies over time).
+
+    Parameters
+    ----------
+    observer : Observer
+        Observer object containing the observer's location.
+    target : Target
+        Target object containing:
+            - ra : np.ndarray of RA values in degrees, one per day
+            - dec : np.ndarray of Dec values in degrees, one per day
+            - times : pd.DatetimeIndex of UTC timestamps, one per day
+
+    Returns
+    -------
+    datetimes_utc_1d : pd.DatetimeIndex
+        UTC timestamps at 10-minute intervals spanning the full date range.
+    target_alt_1d : np.ndarray
+        Altitude of the target in degrees at each timestamp.
+    sun_alt_1d : np.ndarray
+        Altitude of the Sun in degrees at each timestamp.
+
+    Notes
+    -----
+    Interpolating RA/dec linearly over 1-day intervals introduces negligible
+    error for most solar system bodies. The Moon is an exception and may
+    require a finer RA/dec grid for accurate results.
+    """
+    # Interpolate RA/dec onto altitude times grid (10 minute spacing) 
+    print("Interpolating RA/dec onto 10 minute grid")
+    datetimes_utc_1d = pd.date_range(target.times[0], target.times[-1], freq="10min")
+    jds_daily = astropy.time.Time(target.times).jd
+    jds_alt = astropy.time.Time(datetimes_utc_1d).jd
+    ra_interp = np.interp(jds_alt, jds_daily, target.ra)
+    dec_interp = np.interp(jds_alt, jds_daily, target.dec)
+
+    # Single vectorized altitude calculation
+    print("Calculating altaz_frame")
+    altaz_frame = astropy.coordinates.AltAz(obstime=astropy.time.Time(datetimes_utc_1d), location=observer.location)
+
+    print("Calculating target altitudes")
+    target_coords = astropy.coordinates.SkyCoord(ra=ra_interp, dec=dec_interp, unit="deg")
+    target_alt_1d = target_coords.transform_to(altaz_frame).alt.to_value()
+
+    print("Calculating Sun altitudes")
+    sun_alt_1d = astropy.coordinates.get_sun(astropy.time.Time(datetimes_utc_1d)).transform_to(altaz_frame).alt.to_value()
+
+    return datetimes_utc_1d, target_alt_1d, sun_alt_1d 
+
+
+
+
+
+
+
+
+
+
+def reshape_altitude(observer, times_1d, alt_1d):
+    """
+    Reshape a 1D array of altitudes into a 2D grid suitable for pcolormesh.
+
+    Converts UTC times to the observer's local timezone, then maps each
+    (date, time-of-day) pair to a position in a 2D grid where the x axis
+    is date and the y axis is local time running from noon to noon rather
+    than midnight to midnight. This noon-to-noon convention keeps each
+    observing night in a single contiguous column rather than split across
+    two calendar dates.
+
+    Daylight savings time transitions are handled gracefully: 
+    during spring-forward, the one missing hour maps to NaN in the grid; 
+    during fall-back, the duplicate hour is overwritten with the later value. 
+
+    Parameters
+    ----------
+    observer : Observer
+        Observer object containing the observer's timezone.
+    times_1d : pd.DatetimeIndex
+        UTC timestamps at regular intervals (e.g. 10-minute spacing).
+    alt_1d : np.ndarray
+        Altitude values in degrees, one per timestamp in times_1d.
+
+    Returns
+    -------
+    x_dates_1d : pd.DatetimeIndex
+        Unique local dates, timezone-aware, for use as the pcolormesh x axis.
+    y_times_1d : np.ndarray of pd.Timestamp
+        Unique local times-of-day expressed as timestamps on an arbitrary
+        reference date, running from noon to noon, for use as the pcolormesh
+        y axis.
+    alt_2d : np.ndarray
+        2D array of shape (n_times_per_day, n_dates) containing altitude
+        values in degrees. NaN where no data exists (e.g. DST spring-forward).
+
+    Notes
+    -----
+    The reference date used for y_times_1d is arbitrary since only the time
+    component is displayed on the plot axis.
+    """
+    # Convert to local time 
+    local_times = times_1d.tz_convert(observer.timezone)
+
+    # Create 1d arrays of dates and times (x and y axes on plot)
+    unique_dates = np.unique(local_times.date)
+    unique_times = np.unique(local_times.time) 
+
+    # Roll times array over so that it goes noon-noon instead of midnight-midnight
+    noon_idx = np.where(unique_times == dt.time(12, 0))[0][0]
+    unique_times = np.roll(unique_times, -noon_idx)
+
+
+    # Build lookup dictionaries for fast indexing
+    date_to_idx = {d: i for i, d in enumerate(unique_dates)}
+    hour_to_idx = {t: i for i, t in enumerate(unique_times)}
+
+    # Initialize grid with NaN
+    alt_2d = np.full((len(unique_times), len(unique_dates)), np.nan)
+
+    # Fill grid
+    for i, (lt, alt) in enumerate(zip(local_times, alt_1d)):
+        row = hour_to_idx.get(lt.time())
+        col = date_to_idx.get(lt.date())
+        if row is not None and col is not None:
+            alt_2d[row, col] = alt
+
+    # Convert unique_dates and unique_times to things that can be plotted 
+    x_dates_1d = pd.DatetimeIndex(unique_dates, tz=str(observer.timezone))
+    # Reference date is arbitrary since we're only showing the time on the plot anyway 
+    ref_date = pd.Timestamp("2025-12-15 00:00:00", tz=str(observer.timezone))  
+    y_times_1d = np.array([
+        ref_date + dt.timedelta(hours=t.hour + (24 if t.hour < 12 else 0), minutes=t.minute, seconds=t.second)
+        for t in unique_times
+    ])
+    return x_dates_1d, y_times_1d, alt_2d 
 
 
 
@@ -326,95 +411,83 @@ def calc_visibility(Observer, Target, num_yrs: int = 2, spacing_minutes=10):
 
 
 def plot_visibility(
-        dates, 
-        times, 
-        target_alt, 
-        sun_alt, 
-        Target, 
-        Observer, 
+        x_dates_1d, 
+        y_times_1d, 
+        target_alt_2d, 
+        sun_alt_2d, 
+        target, 
+        observer, 
         target_min_alt=25, 
         sun_max_alt=-6
-    ): 
+    ):
     """
-    Plot a 2D visibility map showing when a target is observable from a given site.
+    Plot a 2D visibility map showing when a target is observable over a two-year period.
 
-    This function visualizes:
-    - Solar twilight regions (background shading)
-    - Target visibility above a minimum altitude (binary overlay)
-    - Target altitude as a continuous colormap during observable conditions
+    The x axis represents date and the y axis represents local time of day,
+    running from noon to noon to keep each observing night in a single contiguous
+    column. The plot consists of three layered components:
 
-    The resulting plot shows date on the x-axis and local time on the y-axis,
-    providing an intuitive “observability map” for planning observations.
+    1. **Twilight background**
+       Colored bands indicating solar altitude ranges:
+       - Full night:              Sun < -18°
+       - Astronomical twilight:  -18° ≤ Sun < -12°
+       - Nautical twilight:      -12° ≤ Sun < -6°
+       - Civil twilight:          -6° ≤ Sun < 0°
+       - Civil daylight:           0° ≤ Sun < 6°
+       - Nautical daylight:        6° ≤ Sun < 12°
+       - Astronomical daylight:   12° ≤ Sun < 18°
+       - Full day:               Sun ≥ 18°
+
+    2. **Target visibility mask**
+       Semi-transparent black overlay showing when the target is above
+       `target_min_alt`, regardless of Sun position. A solid black contour
+       marks the boundary.
+
+    3. **Target altitude colormap**
+       Grayscale shading showing the target's altitude, masked to only appear
+       where both conditions are met:
+       - target_alt > target_min_alt (target is above minimum altitude)
+       - sun_alt <= sun_max_alt (Sun is below the maximum allowed altitude)
+       A red contour marks the boundary of this region, and a dashed green
+       line on the colorbar indicates the target's maximum altitude.
 
     Parameters
     ----------
-    dates : pandas.DatetimeIndex
-        Array of dates (one per column in the grid). 
-
-    times : array-like of datetime
-        Time axis for one day (local time), used as the y-axis.
-
-    target_alt : 2D numpy.ndarray
-        Target altitude in degrees, shape (time, date). 
-
-    sun_alt : 2D numpy.ndarray
-        Sun altitude in degrees, shape (time, date).
-
-    Target : astropy.coordinates.SkyCoord
-        Target object. Expected to have attributes like `.name` and `.coord_str`. 
-
-    Observer : astroplan.Observer
-        Observer object. Expected to have attributes like `.name`, `.coord_str`,
-        and `.timezone`.
-
+    x_dates_1d : pd.DatetimeIndex
+        Timezone-aware dates for the x axis, one per day.
+    y_times_1d : np.ndarray of pd.Timestamp
+        Local times-of-day for the y axis, running noon to noon, expressed
+        as timestamps on an arbitrary reference date.
+    target_alt_2d : np.ndarray
+        2D array of shape (n_times_per_day, n_dates) containing target
+        altitude in degrees.
+    sun_alt_2d : np.ndarray
+        2D array of shape (n_times_per_day, n_dates) containing Sun
+        altitude in degrees.
+    target : Target
+        Target object providing target.name and target.coord_str for the
+        plot title.
+    observer : Observer
+        Observer object providing observer.name, observer.coord_str, and
+        observer.timezone for the plot title and y axis label.
     target_min_alt : float, optional
-        Minimum altitude (in degrees) required for the target to be 
-        considered observable (default = 25). 
-
+        Minimum target altitude in degrees to consider the target observable.
+        Default is 25°.
     sun_max_alt : float, optional
-        Maximum Sun altitude (in degrees) for acceptable observing conditions.
-        Default = -6 (civil twilight limit). Use -12 or -18 for darker conditions.
+        Maximum Sun altitude in degrees to consider it sufficiently dark.
+        Default is -6° (civil twilight).
 
     Returns
     -------
-    None
-        Displays a matplotlib figure.
+    fig : matplotlib.figure.Figure
+        The completed figure, which can be saved or displayed by the caller.
 
-    Notes
-    -----
-    The plot consists of three layered components:
-
-    1. **Twilight background**
-        Colored bands indicate solar altitude ranges: 
-        - Full night: Sun < -18°
-        - Astronomical twilight: -18° ≤ Sun < -12°
-        - Nautical twilight: -12° ≤ Sun < -6°
-        - Civil twilight: -6° ≤ Sun < 0°
-        - Civil daylight: 0° ≤ Sun < 6°
-        - Nautical daylight: 6° ≤ Sun < 12°
-        - Astronomical daylight: 12° ≤ Sun < 18°
-        - Full day: Sun ≥ 18°
-
-    2. **Target visibility mask**
-       Semi-transparent overlay showing when the target is above `target_min_alt`.
-
-    3. **Target altitude colormap**
-       Continuous shading (grayscale) showing altitude, only where both:
-       - target_alt > target_min_alt (the target is up)
-       - sun_alt <= sun_max_alt (it's night) 
-
-    Examples
-    --------
-    >>> dates, times, target_alt, sun_alt = calc_visibility(obs, target)
-    >>> plot_visibility(dates, times, target_alt, sun_alt, target, obs)
-
-    >>> # Stricter darkness requirement (astronomical night)
-    >>> plot_visibility(dates, times, target_alt, sun_alt, target, obs,
-    ...                 sun_max_alt=-18)
-
-    >>> # Lower altitude cutoff
-    >>> plot_visibility(dates, times, target_alt, sun_alt, target, obs,
-    ...                 target_min_alt=20)
+    Example
+    -------
+    >>> datetimes_utc_1d, target_alt_1d, sun_alt_1d = src.calc_visibility(observer, target)
+    >>> x_dates, y_times, sun_alt_2d = src.reshape_altitude(observer, datetimes_utc_1d, sun_alt_1d)
+    >>> x_dates, y_times, target_alt_2d = src.reshape_altitude(observer, datetimes_utc_1d, target_alt_1d)
+    >>> fig = src.plot_visibility(x_dates, y_times, target_alt_2d, sun_alt_2d, target, observer)
     """
 
     # Create figure 
@@ -428,18 +501,18 @@ def plot_visibility(
         else:
             return date.strftime('%b')     # Feb, Mar, Apr, ...
     ax.set_xlabel("Date of observation") 
-    ax.set_xlim(dates[0], dates[-1]) 
+    ax.set_xlim(x_dates_1d[0], x_dates_1d[-1]) 
     ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1)) 
     ax.xaxis.set_major_formatter(format_date)
 
     # Y-axis: Local time  
-    ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=pytz.timezone(str(Observer.timezone)))) 
-    ax.set_ylabel(f"Local time ({str(Observer.timezone)})") 
+    ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=pytz.timezone(str(observer.timezone)))) 
+    ax.set_ylabel(f"Local time ({str(observer.timezone)})") 
     ax.yaxis.set_major_locator(mdates.HourLocator(interval=2)) 
     ax.yaxis.set_minor_locator(mdates.HourLocator(interval=1)) 
 
     # Title    
-    ax.set_title(f"Observer: {Observer.name} ({Observer.coord_str}) \nTarget: {Target.name} ({Target.coord_str})")
+    ax.set_title(f"Observer: {observer.name} ({observer.coord_str}) \nTarget: {target.name} ({target.coord_str})")
 
 
 
@@ -459,10 +532,10 @@ def plot_visibility(
     ]
 
     # Interior: blue to yellow background gradient 
-    plt.contourf(
-        dates,
-        times,
-        sun_alt, 
+    ax.contourf(
+        x_dates_1d,
+        y_times_1d,
+        sun_alt_2d, 
         levels=levels,
         colors=colors, 
     )
@@ -481,10 +554,10 @@ def plot_visibility(
         (*base_day[:3], 0.7),
         (*base_day[:3], 0.9),
     ]
-    plt.contour(
-        dates, 
-        times, 
-        sun_alt, 
+    ax.contour(
+        x_dates_1d, 
+        y_times_1d, 
+        sun_alt_2d, 
         levels=levels, 
         colors=colors_borders, 
         linewidths=1, 
@@ -499,19 +572,19 @@ def plot_visibility(
     # Interior: use low alpha so that you can see the twilight colors through it 
     levels = [target_min_alt, 90] 
     colors = [(*mcolors.to_rgba("black")[:3], 0.2)]
-    plt.contourf(
-        dates,
-        times,
-        target_alt,  
+    ax.contourf(
+        x_dates_1d,
+        y_times_1d,
+        target_alt_2d,  
         levels=levels,
         colors=colors, 
     )
 
     # Border: 
-    plt.contour(
-        dates,
-        times,
-        target_alt,  
+    ax.contour(
+        x_dates_1d,
+        y_times_1d,
+        target_alt_2d,  
         levels=levels,
         colors="black", 
         linewidths=1, 
@@ -523,12 +596,12 @@ def plot_visibility(
     # 3: Target altitude colormap 
 
     # Display altitude only where target is up and sun is down 
-    visible = (target_alt > target_min_alt) & (sun_alt <= sun_max_alt)
-    Z = np.ma.MaskedArray(target_alt, mask=~visible)
+    visible = (target_alt_2d > target_min_alt) & (sun_alt_2d <= sun_max_alt)
+    Z = np.ma.MaskedArray(target_alt_2d, mask=~visible)
     dark_greys = mcolors.LinearSegmentedColormap.from_list("dark_greys",cm.Greys(np.linspace(0.3, 1, 256)))
-    target_alt_plot = plt.pcolormesh(
-        dates,
-        times,
+    target_alt_plot = ax.pcolormesh(
+        x_dates_1d,
+        y_times_1d,
         Z, 
         cmap=dark_greys, 
         zorder=4, 
@@ -537,9 +610,9 @@ def plot_visibility(
     )
 
     # Add red contour around visibile region to make it pop more 
-    plt.contour(
-        dates,
-        times,
+    ax.contour(
+        x_dates_1d,
+        y_times_1d,
         visible.astype(int),
         levels=[0.5],
         colors="red",
