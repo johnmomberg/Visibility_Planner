@@ -299,7 +299,12 @@ def calc_visibility(observer, target):
     datetimes_utc_1d = pd.date_range(target.times[0], target.times[-1], freq="10min")
     jds_daily = astropy.time.Time(target.times).jd
     jds_alt = astropy.time.Time(datetimes_utc_1d).jd
-    ra_interp = np.interp(jds_alt, jds_daily, target.ra)
+
+    # RA wraps around from 0 to 360, so make sure the interpolation works at the boundary 
+    ra_unwrapped = np.unwrap(target.ra, period=360)
+    ra_interp_unwrapped = np.interp(jds_alt, jds_daily, ra_unwrapped)
+    ra_interp = ra_interp_unwrapped % 360  
+
     dec_interp = np.interp(jds_alt, jds_daily, target.dec)
 
     # Single vectorized altitude calculation
