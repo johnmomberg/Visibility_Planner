@@ -10,6 +10,7 @@ import matplotlib.cm as cm
 import matplotlib.colors as mcolors 
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch 
+import matplotlib.ticker as mticker 
 
 import astropy 
 import astropy.units as u 
@@ -511,7 +512,14 @@ def plot_visibility(
     ax.xaxis.set_major_formatter(format_date)
 
     # Y-axis: Local time  
-    ax.yaxis.set_major_formatter(mdates.DateFormatter('%H:%M', tz=pytz.timezone(str(observer.timezone)))) 
+    def time_formatter(x, pos):
+        var = mdates.num2date(x, tz=pytz.timezone(str(observer.timezone)))
+        hour = var.hour % 12
+        if hour == 0:
+            hour = 12
+        suffix = "AM" if var.hour < 12 else "PM"
+        return f"{hour} {suffix}"
+    ax.yaxis.set_major_formatter(mticker.FuncFormatter(time_formatter))
     ax.set_ylabel(f"Local time ({str(observer.timezone)})") 
     ax.yaxis.set_major_locator(mdates.HourLocator(interval=2)) 
     ax.yaxis.set_minor_locator(mdates.HourLocator(interval=1)) 
@@ -640,7 +648,12 @@ def plot_visibility(
         ), 
         Line2D([0], [0], color='red', lw=2, label=f"Target >{target_min_alt}° \nand Sun <{sun_max_alt}°"),
     ]
-    ax.legend(handles=legend_elements, loc='upper right')
+    ax.legend(handles=legend_elements, loc='upper right').set_zorder(8)
+    
+    # Force gridlines to appear above everything 
+    ax.grid(color="black", lw=0.4)
+    ax.xaxis.set_zorder(7)
+    ax.yaxis.set_zorder(7)
 
     return fig 
 
