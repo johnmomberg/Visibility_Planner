@@ -702,7 +702,7 @@ def plot_visibility(
     )
 
     # Colorbar     
-    target_cbar = add_colorbar_range(cbar_min=0, cbar_max=90, img_min=target_min_alt, img_max=np.nanmax(Z), mappable=target_alt_plot)
+    target_cbar = add_colorbar_range(cbar_min=0, cbar_max=90, img_min=np.nanmin(Z), img_max=np.nanmax(Z), mappable=target_alt_plot)
     target_cbar.ax.set_xlabel("Target \naltitude \n(deg)")
     target_cbar.ax.xaxis.set_label_position('bottom')
 
