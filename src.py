@@ -9,7 +9,7 @@ import matplotlib.dates as mdates
 import matplotlib.cm as cm
 import matplotlib.colors as mcolors 
 from matplotlib.lines import Line2D
-from matplotlib.patches import Patch 
+import matplotlib.patches as mpatches 
 import matplotlib.ticker as mticker 
 
 import astropy 
@@ -416,6 +416,91 @@ def reshape_altitude(observer, times_1d, alt_1d):
 
 
 
+# Add a box inside the colorbar to show the range of values it reaches, while keeping the vmin and vmax of the plot the same 
+def add_colorbar_range(cbar_min, cbar_max, img_min, img_max, mappable): 
+
+    # Initialize colorbar, remove default border     
+    cbar = plt.colorbar(mappable=mappable, aspect=15, pad=0.005)
+    cbar.outline.set_visible(False)
+
+    # Y axis uses data coords; x axis uses fig coords (0=left side, 1=right side), but without needing to transform 
+    cbar_ax = cbar.ax
+    cbar_ax.set_ylim(cbar_min, cbar_max)
+    cbar_ax.set_xlim(0, 1)
+    
+    # Create white regions to block the unreached colors
+    gap_width = 0.1
+    bottom_left_blocker = mpatches.Rectangle( 
+        xy=(0, cbar_min), 
+        width=gap_width, 
+        height=img_min-cbar_min, 
+        facecolor="white", 
+        linewidth=0, 
+        edgecolor="none", 
+        zorder=3, 
+    )
+    cbar_ax.add_patch(bottom_left_blocker)
+
+    bottom_right_blocker = mpatches.Rectangle( 
+        xy=(1-gap_width, cbar_min), 
+        width=gap_width, 
+        height=img_min-cbar_min, 
+        facecolor="white", 
+        linewidth=0, 
+        edgecolor="none", 
+        zorder=3, 
+    )
+    cbar_ax.add_patch(bottom_right_blocker)
+
+    top_left_blocker = mpatches.Rectangle( 
+        xy=(0, img_max), 
+        width=gap_width, 
+        height=cbar_max-img_max, 
+        facecolor="white", 
+        linewidth=0, 
+        edgecolor="none", 
+        zorder=3, 
+    )
+    cbar_ax.add_patch(top_left_blocker)
+
+    top_right_blocker = mpatches.Rectangle( 
+        xy=(1-gap_width, img_max), 
+        width=gap_width, 
+        height=cbar_max-img_max, 
+        facecolor="white", 
+        linewidth=0, 
+        edgecolor="none", 
+        zorder=3, 
+    )
+    cbar_ax.add_patch(top_right_blocker)
+
+    # Black border around highlighted region
+    border_left_offset = 0.02
+    border = mpatches.Rectangle(
+        xy=(border_left_offset, img_min), 
+        width=1-2*border_left_offset, 
+        height=img_max-img_min, 
+        facecolor="none", 
+        linewidth=1.25, 
+        edgecolor="black", 
+        zorder=4, 
+    )
+    cbar_ax.add_patch(border)
+
+    # Remove ticks (they look like minus signs)  
+    cbar_ax.tick_params(axis='both', length=0)
+
+    return cbar 
+
+
+
+
+
+
+
+
+
+
 def plot_visibility(
         x_dates_1d, 
         y_times_1d, 
@@ -534,18 +619,18 @@ def plot_visibility(
     base_night = mcolors.to_rgba("cornflowerblue")
     base_day = mcolors.to_rgba("gold")
     colors = [
-        (*base_night[:3], 0.9),
+        (*base_night[:3], 1.0),
         (*base_night[:3], 0.7),
-        (*base_night[:3], 0.5),
-        (*base_night[:3], 0.3),
-        (*base_day[:3], 0.3),
-        (*base_day[:3], 0.5),
+        (*base_night[:3], 0.4),
+        (*base_night[:3], 0.2),
+        (*base_day[:3], 0.2),
+        (*base_day[:3], 0.4),
         (*base_day[:3], 0.7),
-        (*base_day[:3], 0.9),
+        (*base_day[:3], 1.0),
     ]
 
     # Interior: blue to yellow background gradient 
-    ax.contourf(
+    twilight_levels_plot = ax.contourf(
         x_dates_1d,
         y_times_1d,
         sun_alt_2d, 
@@ -553,38 +638,24 @@ def plot_visibility(
         colors=colors, 
     )
 
-    # Borders: higher zorder, so that it plots the borders on top of the target altitude colormap 
-    # (So you can tell which level of twilight you're in while also seeing the altitude)
-    # Replace the border between civil twilight and civil daylight with white 
-    # (Makes it easier to see the distinction between night and day)
-    colors_borders = [
-        (*base_night[:3], 0.9),
-        (*base_night[:3], 0.7),
-        (*base_night[:3], 0.5),
-        (*base_night[:3], 0.3),
-        "white",
-        (*base_day[:3], 0.5),
-        (*base_day[:3], 0.7),
-        (*base_day[:3], 0.9),
-    ]
-    ax.contour(
-        x_dates_1d, 
-        y_times_1d, 
-        sun_alt_2d, 
-        levels=levels, 
-        colors=colors_borders, 
-        linewidths=1, 
-        linestyles="solid", 
-        zorder=5, 
-    )
-
-
+    # Color bar 
+    twilight_cbar = plt.colorbar(mappable=twilight_levels_plot, pad=-0.06)
+    twilight_cbar.ax.text(0.5, -60, "Night", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, -15, "Astro", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, -9, "Nautical", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, -3, "Civil", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, 3, "Civl", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, 9, "Nautical", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, 15, "Astro", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.text(0.5, 60, "Day", fontsize=10, rotation=90, ha="center", va="center")
+    twilight_cbar.ax.set_xlabel("Sun \naltitude \n(deg)")
+    twilight_cbar.ax.xaxis.set_label_position('bottom')
 
     # 2: Target visibility binary (ignore sun, just show if the target is up or not)
 
     # Interior: use low alpha so that you can see the twilight colors through it 
     levels = [target_min_alt, 90] 
-    colors = [(*mcolors.to_rgba("black")[:3], 0.2)]
+    colors = [(*mcolors.to_rgba("black")[:3], 0.15)]
     ax.contourf(
         x_dates_1d,
         y_times_1d,
@@ -608,19 +679,34 @@ def plot_visibility(
 
     # 3: Target altitude colormap 
 
-    # Display altitude only where target is up and sun is down 
+    # Display altitude only where target is up and sun is down
     visible = (target_alt_2d > target_min_alt) & (sun_alt_2d <= sun_max_alt)
-    Z = np.ma.MaskedArray(target_alt_2d, mask=~visible)
-    dark_greys = mcolors.LinearSegmentedColormap.from_list("dark_greys",cm.Greys(np.linspace(0.3, 1, 256)))
-    target_alt_plot = ax.pcolormesh(
+
+    # Mask values that should not be displayed
+    Z = np.ma.masked_where(~visible, target_alt_2d)
+
+    # Contour levels every n_spacing  degrees 
+    n_spacing = 5 # degrees 
+    levels = np.arange(0, 90.001, n_spacing)
+
+    # Filled contours
+    target_alt_plot = ax.contourf(
         x_dates_1d,
         y_times_1d,
-        Z, 
-        cmap=dark_greys, 
-        zorder=4, 
-        vmin=0, 
-        vmax=90, 
+        Z,
+        levels=levels,
+        cmap="nipy_spectral",
+        vmin=0,
+        vmax=90,
+        zorder=4,
     )
+
+    # Colorbar     
+    target_cbar = add_colorbar_range(cbar_min=0, cbar_max=90, img_min=target_min_alt, img_max=np.nanmax(Z), mappable=target_alt_plot)
+    target_cbar.ax.set_xlabel("Target \naltitude \n(deg)")
+    target_cbar.ax.xaxis.set_label_position('bottom')
+
+
 
     # Add red contour around visibile region to make it pop more 
     ax.contour(
@@ -632,15 +718,10 @@ def plot_visibility(
         linewidths=2,
         zorder=6
     )
-
-    # Color bar 
-    cbar = plt.colorbar(target_alt_plot, pad=0.01, label="Target altitude (deg)") 
-    cbar.ax.set_ylim(target_min_alt, 90) 
-    cbar.ax.axhline(np.nanmax(Z), color="limegreen", ls="dashed") # Show where max altitude is on color bar 
-
+    
     # Create "fake"/unplotted objects to display in the legend 
     legend_elements = [
-        Patch(
+        mpatches.Patch(
             facecolor=(0, 0, 0, 0.2),  # RGBA: transparent fill only
             edgecolor="black",
             linewidth=1.5,
@@ -651,7 +732,7 @@ def plot_visibility(
     ax.legend(handles=legend_elements, loc='upper right').set_zorder(8)
     
     # Force gridlines to appear above everything 
-    ax.grid(color="black", lw=0.4)
+    ax.grid(color="black", lw=0.5, alpha=0.5)
     ax.xaxis.set_zorder(7)
     ax.yaxis.set_zorder(7)
 
