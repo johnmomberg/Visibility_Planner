@@ -491,7 +491,7 @@ def reshape_altitude(observer, times_1d, alt_1d):
     unique_times = np.unique(local_times.time) 
 
     # Roll times array over so that it goes noon-noon instead of midnight-midnight
-    noon_idx = np.where(unique_times == dt.time(12, 0))[0][0]
+    noon_idx = np.where(unique_times == dt.time(hour=12, minute=0, second=0, microsecond=0))[0][0]
     unique_times = np.roll(unique_times, -noon_idx)
 
 
@@ -697,16 +697,12 @@ def plot_visibility(
     fig, ax = plt.subplots(figsize=(16,10))
 
     # X-axis: Dates   
-    def format_date(x, pos=None):
-        date = mdates.num2date(x)
-        if date.month in [1, 12]:
-            return date.strftime('%b \n%Y')  # Jan 2026, Dec 2026, Jan 2027, Dec 2027 
-        else:
-            return date.strftime('%b')     # Feb, Mar, Apr, ...
     ax.set_xlabel("Date of observation") 
     ax.set_xlim(x_dates_1d[0], x_dates_1d[-1]) 
-    ax.xaxis.set_major_locator(mdates.MonthLocator(interval=1)) 
-    ax.xaxis.set_major_formatter(format_date)
+    ax.xaxis.set_major_formatter(mdates.DateFormatter('%b %d\n%Y'))
+    ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=8, maxticks=20))
+
+
 
     # Y-axis: Local time  
     def time_formatter(x, pos):
