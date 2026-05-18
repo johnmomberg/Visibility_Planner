@@ -2,6 +2,7 @@ import numpy as np
 import datetime as dt 
 import pandas as pd 
 from tqdm import tqdm 
+import scipy 
 from dataclasses import dataclass 
 
 import matplotlib.pyplot as plt 
@@ -19,6 +20,84 @@ import astroquery.jplhorizons
 import astroplan 
 import pytz 
 import timezonefinder as tzf 
+
+
+
+
+
+
+
+
+
+
+def interpolate_on_unit_sphere(alt_coarse, az_coarse, times_coarse, freq_fine):
+    """
+    Interpolate angular coordinates on a sphere (such as RA/Dec or Lat/Long) 
+    by converting them to Cartesian unit vectors (xyz) and interpolating 
+    each vector component independently, and projecting the interpolated 
+    vectors back onto the unit sphere.
+
+    This avoids issues associated with directly interpolating angular
+    coordinates, such as azimuth wrapping near 0/360 degrees and coordinate
+    singularities near the poles or zenith.
+
+    Parameters
+    ----------
+    alt_coarse : array-like
+        Altitude or latitude-like angular coordinate in degrees.
+
+    az_coarse : array-like
+        Azimuth or longitude-like angular coordinate in degrees.
+
+    times_coarse : array-like
+        Array of times corresponding to the coarse angular samples.
+
+    freq_fine : str
+        Pandas frequency string specifying the interpolation cadence
+        (e.g. "5min", "2h", "0.5D", etc).
+
+    Returns
+    -------
+    times_fine : pandas.DatetimeIndex
+        Fine interpolation time grid.
+
+    alt_fine : ndarray
+        Interpolated altitude values in degrees.
+
+    az_fine : ndarray
+        Interpolated azimuth values in degrees on the interval [0, 360).
+    """
+
+    # Convert alt/az to x/y/z 
+    x_coarse = np.cos(alt_coarse*np.pi/180) * np.cos(az_coarse*np.pi/180)
+    y_coarse = np.cos(alt_coarse*np.pi/180) * np.sin(az_coarse*np.pi/180)
+    z_coarse = np.sin(alt_coarse*np.pi/180) 
+
+    # Convert times to Julian dates for the interpolation 
+    jd_coarse = astropy.time.Time(times_coarse).jd
+
+    # Generate fine grid of times and Julian dates 
+    times_fine = pd.date_range(times_coarse[0], times_coarse[-1], freq=freq_fine)
+    jd_fine = astropy.time.Time(times_fine).jd
+
+    # Interpolate x(t), y(t), and z(t) from coarse to fine grid using cubic interpolations 
+    x_interp_func = scipy.interpolate.interp1d(jd_coarse, x_coarse, kind='cubic')
+    y_interp_func = scipy.interpolate.interp1d(jd_coarse, y_coarse, kind='cubic')
+    z_interp_func = scipy.interpolate.interp1d(jd_coarse, z_coarse, kind='cubic')
+    x_fine = x_interp_func(jd_fine)
+    y_fine = y_interp_func(jd_fine)
+    z_fine = z_interp_func(jd_fine)
+
+    # Normalize the new x/y/z so that it lands on a sphere of radius r=1 
+    norm = np.sqrt(x_fine**2 + y_fine**2 + z_fine**2)
+    x_fine = x_fine/norm 
+    y_fine = y_fine/norm 
+    z_fine = z_fine/norm 
+
+    # Convert back to altitude and azimuth 
+    alt_fine = np.arcsin(z_fine) * 180/np.pi
+    az_fine = np.arctan2(y_fine, x_fine) *180/np.pi % 360
+    return times_fine, alt_fine, az_fine 
 
 
 
@@ -107,7 +186,7 @@ class Target:
 
 
 
-def get_target(target_name=None, target_radec_str=None):
+def get_target(target_name=None, target_radec_str=None, start_str='2025-12-31 12:00:00', num_days=365*2, freq_calc_radec="1D"):
     """
     Resolve a target's RA/dec coordinates for use in visibility calculations.
 
@@ -125,6 +204,17 @@ def get_target(target_name=None, target_radec_str=None):
     target_radec_str : str, optional
         RA/dec string in the format "HH MM SS +DD MM SS", e.g.
         "05 34 32.0 +22 00 52". Mutually exclusive with target_name.
+    start_str: str, optional 
+        Date and time (in UTC) to start calculating altitudes. 
+        Default is midnight on December 31, 2025. 
+        Example: '2025-12-31 12:00:00' 
+    num_days: int, optional 
+        Number of days from start to calculate altitudes. Default is 365*2, or two years. 
+    radec_cadence: str, optional 
+        Frequency to calculate the RA and dec of the target. Once per day is good for most objects, 
+        but near earth asteroids need much faster cadence, such as 0.01 days. 
+        "1D" = calculate RA and dec once per day, "3D" = once every 3 days, 
+        "0.01D" = 100 times per day, etc 
 
     Returns
     -------
@@ -167,11 +257,11 @@ def get_target(target_name=None, target_radec_str=None):
         return coord_str 
     
     # Calculate ra/dec of target once per day from December 31st until num_yrs (1 or 2) years ahead 
-    num_yrs = 2 
+    start = pd.Timestamp(start_str, tz='UTC') 
     radec_times = pd.date_range(
-        start='2025-12-31 12:00:00',
-        end=f'{2025+num_yrs}-12-31 12:00:00',
-        freq='1D', # 3D = Calculate visibility every 3rd day, 10D = every 10th day, etc 
+        start=start,
+        end = start + pd.Timedelta(days=num_days), 
+        freq=freq_calc_radec, # 1D = calc ra/dec every day, 3D = every 3rd day, 10D = every 10th day, etc 
         tz="UTC", 
     )
     
@@ -234,6 +324,7 @@ def get_target(target_name=None, target_radec_str=None):
                 ra.extend(eph["RA"])
                 dec.extend(eph["DEC"])
             print(f"Retrieved '{target_name}' from JPL Horizons") 
+            print(f"RA/dec calculated with cadence of {freq_calc_radec}")
             ra_arr = np.array(ra) 
             dec_arr = np.array(dec) 
 
@@ -261,14 +352,13 @@ def get_target(target_name=None, target_radec_str=None):
 
 
 
-def calc_visibility(observer, target):
+def calc_visibility(observer, target, freq_calc_altaz="60min", freq_interp_altaz="5min"):
     """
     Calculate the altitude of a target and the Sun over time for a given observer.
 
-    Interpolates the target's RA/dec from a daily grid onto a finer 10-minute
-    grid, then computes altitude in a single vectorized operation. Works for
-    both fixed targets (where RA/dec is constant) and moving solar system bodies
-    (where RA/dec varies over time).
+    1. Interpolate the target's RA/dec from daily grid onto freq_calc_altaz grid  
+    2. Calculate altitude of target and sun at all times in freq_calc_altaz grid 
+    3. Interpolates altitudes onto a finer grid using freq_interp_altaz for smoother plots 
 
     Parameters
     ----------
@@ -278,7 +368,13 @@ def calc_visibility(observer, target):
         Target object containing:
             - ra : np.ndarray of RA values in degrees, one per day
             - dec : np.ndarray of Dec values in degrees, one per day
-            - times : pd.DatetimeIndex of UTC timestamps, one per day
+            - times : pd.DatetimeIndex of UTC timestamps, one per day 
+    freq_calc_altaz: str 
+        How often it calculates the altitude (coarse grid)
+        Ex: "10min" = calculate target and sun altitudes every 10 minutes 
+    freq_interp_altaz: str 
+        The grid it interpolates the altitude onto for plots (fine grid)
+        so that it doesn't calculate the altitude as often and saves time 
 
     Returns
     -------
@@ -295,29 +391,45 @@ def calc_visibility(observer, target):
     error for most solar system bodies. The Moon is an exception and may
     require a finer RA/dec grid for accurate results.
     """
-    # Interpolate RA/dec onto altitude times grid (10 minute spacing) 
-    print("Interpolating RA/dec onto 10 minute grid")
-    datetimes_utc_1d = pd.date_range(target.times[0], target.times[-1], freq="10min")
-    jds_daily = astropy.time.Time(target.times).jd
-    jds_alt = astropy.time.Time(datetimes_utc_1d).jd
 
-    # RA wraps around from 0 to 360, so make sure the interpolation works at the boundary 
-    ra_unwrapped = np.unwrap(target.ra, period=360)
-    ra_interp_unwrapped = np.interp(jds_alt, jds_daily, ra_unwrapped)
-    ra_interp = ra_interp_unwrapped % 360  
+    # Interpolate RA/dec onto altitude times grid 
+    print(f"Interpolating RA/dec onto {freq_calc_altaz} grid") 
+    times_calc_alt, dec_calc_alt, ra_calc_alt = interpolate_on_unit_sphere(
+        alt_coarse=target.dec, 
+        az_coarse=target.ra, 
+        times_coarse=target.times, 
+        freq_fine=freq_calc_altaz
+    )
 
-    dec_interp = np.interp(jds_alt, jds_daily, target.dec)
-
-    # Single vectorized altitude calculation
+    # Calculate alt/az frame 
     print("Calculating altaz_frame")
-    altaz_frame = astropy.coordinates.AltAz(obstime=astropy.time.Time(datetimes_utc_1d), location=observer.location)
+    altaz_frame = astropy.coordinates.AltAz(obstime=astropy.time.Time(times_calc_alt), location=observer.location)
 
-    print("Calculating target altitudes")
-    target_coords = astropy.coordinates.SkyCoord(ra=ra_interp, dec=dec_interp, unit="deg")
-    target_alt_1d = target_coords.transform_to(altaz_frame).alt.to_value()
+    # Calculate target 
+    print(f"Calculating target altitudes on {freq_calc_altaz} grid")
+    target_coords = astropy.coordinates.SkyCoord(ra=ra_calc_alt, dec=dec_calc_alt, unit="deg").transform_to(altaz_frame)
 
-    print("Calculating Sun altitudes")
-    sun_alt_1d = astropy.coordinates.get_sun(astropy.time.Time(datetimes_utc_1d)).transform_to(altaz_frame).alt.to_value()
+    # Interpolate target onto finer grid 
+    print(f"Interpolating target altitudes onto {freq_interp_altaz} grid") 
+    datetimes_utc_1d, target_alt_1d, target_az_1d = interpolate_on_unit_sphere(
+        alt_coarse=target_coords.alt.to_value(), 
+        az_coarse=target_coords.az.to_value(), 
+        times_coarse=times_calc_alt, 
+        freq_fine=freq_interp_altaz, 
+    )
+
+    # Calculate sun 
+    print(f"Calculating Sun altitudes on {freq_calc_altaz} grid")
+    sun_coords = astropy.coordinates.get_sun(astropy.time.Time(times_calc_alt)).transform_to(altaz_frame) 
+
+    # Interpolate sun onto finer grid 
+    print(f"Interpolating Sun altitudes onto {freq_interp_altaz} grid")
+    datetimes_utc_1d, sun_alt_1d, sun_az_1d = interpolate_on_unit_sphere(
+        alt_coarse=sun_coords.alt.to_value(), 
+        az_coarse=sun_coords.az.to_value(), 
+        times_coarse=times_calc_alt, 
+        freq_fine=freq_interp_altaz, 
+    )
 
     return datetimes_utc_1d, target_alt_1d, sun_alt_1d 
 
