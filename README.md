@@ -2,7 +2,7 @@
 
 ## Overview
 
-Visibility Planner is a tool for computing and visualizing when astronomical targets are observable from a given location. It generates visibility maps with time of year on the x-axis and local time on the y-axis, making it easy to see when a target is accessible throughout the night and throughout the year.
+Visibility Planner is a tool for computing and visualizing when astronomical targets are observable from a given location. It generates visibility maps with time of year on the x-axis and local time on the y-axis, making it easy to see when a target is observable throughout the night and throughout the year.
 
 The plots highlights when a target is observable by looking for times when both conditions are met: 
 - the target is above a chosen minimum altitude, and
@@ -14,13 +14,13 @@ The tool is intended for amateur astronomers, professional astronomers, observat
 
 This tool provides a fast and intuitive way to identify optimal observing windows without manually checking ephemerides night by night. Traditional visibility tools are often designed around examining a single date at a time (for example, plotting altitude versus time over the course of one night). While useful for planning an individual observing session, that approach becomes cumbersome when trying to answer questions about long-term observability. 
 
-For many observing projects, the important question is not simply “Where is the target at 10:30 PM on this date?” but rather “During which parts of the year is this target observable at any point during the night?” A target may be equally acceptable at 10 PM, 2 AM, or just before dawn, as long as it rises high enough above the horizon under sufficiently dark skies at some point throughout the night. 
+For many observing projects, the important question is not simply “Where is the target at 10:30 PM on this date?” but rather “During which parts of the year is this target observable at any point during the night?” As long as the target is viewable at some point throughout the night, you might be able to consider it observable on that date. 
 
-Visibility Planner addresses this by displaying altitude as a function of both date and local time simultaneously. Instead of viewing one night at a time or a fixed clock time across the year, the plots show the full evolution of a target’s visibility throughout the year in a single visualization. This makes it easy to identify:
+Visibility Planner addresses this by displaying altitude as a function of both date and local time simultaneously. Instead of viewing a single night at a time, or viewing altitude at a fixed clock time across the year, the plots show the full evolution of a target’s visibility throughout the year in a single visualization. This makes it easy to identify:
 
 - when a target first becomes observable each season,
 - how long it remains observable,
-- what times of night it is best placed throughout the season,
+- what time of night it is observable and how that shifts throughout the season,
 - how twilight and seasonal night length affect observing opportunities.
 
 Tools such as Telescopius and Stellarium are excellent for exploring the sky and planning individual observing sessions, but they are generally optimized around specific dates and times selected by the user. Visibility Planner instead emphasizes the global structure of observability across both time-of-night and time-of-year, making long-term planning and campaign scheduling much more intuitive.
@@ -33,7 +33,11 @@ Here, we provide several example plots generated with this tool in order to show
 
 ### 1. Visibility of a target from Winer Observatory
 
-This plot shows the visibility window for a target as seen from Winer Observatory in Arizona. The highlighted regions indicate when the target is both above the minimum altitude and the sky is dark enough to observe. 
+This plot shows the visibility window for a target as seen from Winer Observatory in Arizona. The highlighted regions indicate the times when the target is both above the minimum altitude requirement and the sky is sufficiently dark for observing.
+
+In this example, the minimum altitude requirement has been set to 25 degrees above the horizon. This parameter can be adjusted depending on how close to the horizon your telescope is capable of observing. The target’s altitude is represented by the blue–green–orange–yellow–red color scale. The expanded part of the color bar highlights which values of altitude the target ever attains during the plotted time span. Plotting the altitude as a color map allows users to easily read off the time that reaches its highest altitude during any given night. 
+
+The twilight requirement in this example has been chosen such that the Sun must be at least 6 degrees below the horizon (solar altitude < -6 degrees). This excludes observing during civil twilight, while still allowing observations during nautical and astronomical twilight. Depending on how dark the sky must be for your target, this requirement can also be adjusted.
 
 ![Winer Visibility](Example_Plots/Winer_Altair.png)
 
@@ -51,9 +55,8 @@ Here we select a different target. Because it has a different right ascension an
 
 In this example, we change the observing location. Several effects are visible:
 
-* The local time axis now reflects **daylight savings time**, unlike the first location
-* The target is **visible for a shorter duration**
-* **Nighttime is shorter in the summer**, since this location is farther from the equator
+* The local time axis now reflects **daylight savings time**, unlike the first location. This can be seen by the sudden vertical shift in the sunset times in March and November. 
+* Because this location is farther away from the equator, the difference in the length of night between summer and winter is more pronounced 
 
 ![Different Location](Example_Plots/IowaCity_Betelgeuse.png)
 
@@ -63,7 +66,7 @@ In this example, we change the observing location. Several effects are visible:
 
 This tool can also be used to track moving targets (i.e., targets that change their RA and dec over time), such as planets, asteroids, and comets. 
 
-The first example shows the planet Mercury. Because Mercury is the closest planet to the sun, it can only ever be seen just after sunset or just before sunrise. This plot shows the best times of year to view Mercury from a given observer location. 
+The first example shows the planet Mercury. Because Mercury is the closest planet to the sun, it can only ever be seen just after sunset or just before sunrise. This plot shows the best times of year to view Mercury from a given observer location. Notice that in this plot, we have reduced the minimum target altitude requirement from >25 degrees to >0 degrees, and also lessened the sun twilight level requirement, in order to make it easier to find times when Mercury is viewable. 
 
 (Note: the plot title gives the target as "199" rather than "Mercury". This is because 199 is the ID assigned to Mercury by the JPL Horizons database, which was used to calculate the RA and dec of moving targets.) 
 
